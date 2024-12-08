@@ -1,0 +1,245 @@
+=pod
+
+=head1 Overview:
+
+B<cache_line_test> is a trivial utility for testing performance
+penalty if cache misses happen. They happen when we access more cache
+lines than it is really necessary.
+
+B<cache_line_test> works like the following:
+
+=over 2
+
+=item * Allocate (L1d size * 3) bytes of memory aligned to cache line size
+
+=item * Fill this array with some data
+
+=item * Shift buffer pointer by the value, specified as command line argument
+
+=item * Sum up 0-st, 32-nd bytes. Then, step forward (cache line size
+* 3) bytes and repeat this step (L1d size / cache line size) times
+
+=back
+
+The following code demonstrates the idea
+
+ // If original p is aligned to a cache line, we access cache
+ // lines #0, #3, #6, #9 etc. Because 2^n is not divided by 3,
+ // sooner or later we use entire cache L1d.
+ //
+ // If, on the other hand, p is cache line offset + (CACHE_LINE/2),
+ // we access cache lines #0, #1, #3, #4, #6, #7, #9, #10 etc.
+ // etc. That is, we access twice as many cache lines.
+ // What we measure here is a performance penalty of this.
+ p += offset;
+ int sum = 0;
+ for (size_t j = 0; j < BLOCKS; ++j) {
+     sum += p[0];
+     sum += p[CACHE_LINE / 2];
+     p += CACHE_LINE * 3;
+ }
+
+=head1 Build procedure
+
+First, install mk-configure. This is a build system.
+
+Normally, if cache line size is 64 bytes, one can just run.
+
+ $ mkcmake
+
+If cache line size is not 64 bytes, one can easily change it. For
+example, on Apple ARM-based systems run the following.
+
+ $ env CACHE_LINE=128 mkcmake
+
+=head1 Examples
+
+=over 2
+
+=item *
+
+My desktop system runs on B<AMD Ryzen 3700-X> CPU which has
+B<64 bytes cache line> and B<256KiB L1d cache>.
+Below is the type script:
+
+ $ mkcmake
+ ...
+ $ for i in `seq 5`; do ./cache_line_test 256144 500000 0; done
+ time: 1379 millisecs (sum: 585934592)
+ time: 1393 millisecs (sum: 585934592)
+ time: 1388 millisecs (sum: 585934592)
+ time: 1375 millisecs (sum: 585934592)
+ time: 1375 millisecs (sum: 585934592)
+ $ for i in `seq 5`; do ./cache_line_test 256144 500000 32; done
+ time: 2884 millisecs (sum: 585934592)
+ time: 2869 millisecs (sum: 585934592)
+ time: 2877 millisecs (sum: 585934592)
+ time: 2604 millisecs (sum: 585934592)
+ time: 2619 millisecs (sum: 585934592)
+ $
+
+Here we see that code with cache misses runs B<twice as slow> as aligned
+memory access variant (~1380 milliseconds vs. ~2800 milliseconds).
+256144 is a L1d cache size. 32 is a cache line size divided by 2.
+500000 is the number of repetitions.
+
+=item *
+
+Beagle Bone White (AKA BBW) running B<ARM Cortex-A8> CPU (ARMv7).
+
+ $ mkcmake
+ ...
+ $ for i in `seq 5`; do ./cache_line_test 32768 500000 0; done
+ time: 1806 millisecs, sum: 1198981120
+ time: 1800 millisecs, sum: 1198981120
+ time: 1797 millisecs, sum: 1198981120
+ time: 1798 millisecs, sum: 1198981120
+ time: 1798 millisecs, sum: 1198981120
+ $ for i in `seq 5`; do ./cache_line_test 32768 500000 31; done
+ time: 1816 millisecs, sum: 1198981120
+ time: 1789 millisecs, sum: 1198981120
+ time: 1799 millisecs, sum: 1198981120
+ time: 1798 millisecs, sum: 1198981120
+ time: 1797 millisecs, sum: 1198981120
+ $ for i in `seq 5`; do ./cache_line_test 32768 500000 32; done
+ time: 7247 millisecs, sum: 1198981120
+ time: 7236 millisecs, sum: 1198981120
+ time: 7235 millisecs, sum: 1198981120
+ time: 7236 millisecs, sum: 1198981120
+ time: 7235 millisecs, sum: 1198981120
+ $
+
+Here we see that shifting pointer by 31 bytes does not change performance.
+However, shifting it by 32 bytes, B<slows down the algorithm by factor of 4>.
+
+=item *
+
+Russian B<Elbrus 4C> CPU.
+
+ $ mkcmake
+ ...
+ $ for i in `seq 5`; do ./cache_line_test 1048576 50000 0; done
+ time: 1173 millisecs, sum: 1018167296
+ time: 1490 millisecs, sum: 1018167296
+ time: 1171 millisecs, sum: 1018167296
+ time: 1626 millisecs, sum: 1018167296
+ time: 1191 millisecs, sum: 1018167296
+ $ for i in `seq 5`; do ./cache_line_test 1048576 50000 31; done
+ time: 1565 millisecs, sum: 1018167296
+ time: 1155 millisecs, sum: 1018167296
+ time: 1408 millisecs, sum: 1018167296
+ time: 1565 millisecs, sum: 1018167296
+ time: 1200 millisecs, sum: 1018167296
+ $ for i in `seq 5`; do ./cache_line_test 1048576 50000 32; done
+ time: 4231 millisecs, sum: 1018167296
+ time: 3786 millisecs, sum: 1018167296
+ time: 4473 millisecs, sum: 1018167296
+ time: 3875 millisecs, sum: 1018167296
+ time: 3790 millisecs, sum: 1018167296
+ $
+
+x3 performance boost if accessed memory cells are within a cache line.
+
+=item *
+
+IBM POWER7 (2.1, pvr 003f 0201). L1d cache is 32KiB. Cache line size is 128 bytes.
+
+ $ env CACHE_LINE=128 mkcmake
+ ...
+ $ for i in `seq 5`; do ./cache_line_test 32768 1500000 0; done
+ time: 648 millisecs (sum: 1798471680)
+ time: 648 millisecs (sum: 1798471680)
+ time: 648 millisecs (sum: 1798471680)
+ time: 647 millisecs (sum: 1798471680)
+ time: 648 millisecs (sum: 1798471680)
+ $ for i in `seq 5`; do ./cache_line_test 32768 1500000 63; done
+ time: 648 millisecs (sum: 1798471680)
+ time: 648 millisecs (sum: 1798471680)
+ time: 648 millisecs (sum: 1798471680)
+ time: 648 millisecs (sum: 1798471680)
+ time: 648 millisecs (sum: 1798471680)
+ $ for i in `seq 5`; do ./cache_line_test 32768 1500000 64; done
+ time: 1407 millisecs (sum: 1798471680)
+ time: 1407 millisecs (sum: 1798471680)
+ time: 1417 millisecs (sum: 1798471680)
+ time: 1417 millisecs (sum: 1798471680)
+ time: 1416 millisecs (sum: 1798471680)
+ $
+
+=item
+
+B<Apple M1> CPU. According to macOS' sysctl, cache line is 128.
+If it is true, I cannot explain the following results.
+
+ $ env CACHE_LINE=128 mkcmake
+ ...
+ $ for i in `seq 5`; do ./cache_line_test 131072 500000 0; done
+ time: 192 millisecs (sum: -2048000000)
+ time: 179 millisecs (sum: -2048000000)
+ time: 179 millisecs (sum: -2048000000)
+ time: 179 millisecs (sum: -2048000000)
+ time: 179 millisecs (sum: -2048000000)
+ $ for i in `seq 5`; do ./cache_line_test 131072 500000 63; done
+ time: 369 millisecs (sum: -2048000000)
+ time: 352 millisecs (sum: -2048000000)
+ time: 352 millisecs (sum: -2048000000)
+ time: 352 millisecs (sum: -2048000000)
+ time: 352 millisecs (sum: -2048000000)
+ $ for i in `seq 5`; do ./cache_line_test 131072 500000 64; done
+ time: 197 millisecs (sum: -2048000000)
+ time: 179 millisecs (sum: -2048000000)
+ time: 179 millisecs (sum: -2048000000)
+ time: 179 millisecs (sum: -2048000000)
+ time: 179 millisecs (sum: -2048000000)
+ $
+
+Also, it works strange if we assume that cache line size is 64-byte.
+Note that 370 is greater than 180.
+
+ $ mkcmake clean
+ ...
+ $ mkcmake
+ ...
+ $ for i in `seq 5`; do ./cache_line_test 131072 500000 0; done
+ time: 370 millisecs (sum: 198967296)
+ time: 354 millisecs (sum: 198967296)
+ time: 354 millisecs (sum: 198967296)
+ time: 354 millisecs (sum: 198967296)
+ time: 354 millisecs (sum: 198967296)
+ $ for i in `seq 5`; do ./cache_line_test 131072 500000 31; done
+ time: 368 millisecs (sum: 198967296)
+ time: 354 millisecs (sum: 198967296)
+ time: 354 millisecs (sum: 198967296)
+ time: 354 millisecs (sum: 198967296)
+ time: 354 millisecs (sum: 198967296)
+ $ for i in `seq 5`; do ./cache_line_test 131072 500000 32; done
+ time: 1389 millisecs (sum: 198967296)
+ time: 1378 millisecs (sum: 198967296)
+ time: 1379 millisecs (sum: 198967296)
+ time: 1378 millisecs (sum: 198967296)
+ time: 1378 millisecs (sum: 198967296)
+ $
+
+=back
+
+=head1 Links
+
+=over 2
+
+=item "Algorithms for Modern Hardware" Chapter 9, Sergey Slotin
+
+L<https://en.algorithmica.org/hpc/>
+
+=item "What every programmer should know about memory", Ulrich Drepper
+
+L<https://lwn.net/Articles/250967/>
+
+=back
+
+=head1 Copyright
+
+Written by Aleksey Cheusov <vle@gmx.net>
+
+https://github.com/cheusov/cache_line_test
+
+=cut
